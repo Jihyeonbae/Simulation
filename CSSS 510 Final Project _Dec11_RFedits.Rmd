@@ -1,0 +1,482 @@
+---
+title: "CSSS 510 Final Paper"
+author: "Jihyeon Bae, Rachel Fordham, Lanyi Zhu"
+date: "11/29/2021"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(simcf)
+library(tile)
+library(RColorBrewer)
+library(tidyverse)
+library(magrittr)
+library(ggstance)
+source("theme_caviz.R")  # ggplot theme 
+library(boot)            # For cv.glm()
+library(separationplot)  # For separation plot
+library(pscl)            # Alternative PCP code
+library(verification)    # For ROC area
+library(broom)
+library(tidyverse)
+library(readxl)
+source("https://faculty.washington.edu/cadolph/mle/binaryGOF.R")    # Percent correctly predicted and concordance indexes
+source("https://faculty.washington.edu/cadolph/mle/binPredict.R")   # Code for making predicted vs actual plots
+source("theme_caviz.R")
+
+brewer <- brewer.pal(9, "Set1")
+red <- brewer[1]
+blue <- brewer[2]
+green <- brewer[3]
+# purple <- brewer[4]
+orange <- brewer[5]
+purple <- "#3f007d"
+nicegray <- "gray45"
+
+set.seed(2021)
+```
+
+## Introduction/Theory
+
+## Data
+
+## Methods
+
+## Results
+
+```{r}
+DF <- read_excel("~/OneDrive - UW/UW2021Autumn/510 MLE/merged.xlsx")
+
+library(haven)
+DF <- read_dta("merged.dta")
+
+dictatorDF <- DF[which(DF$democracy == 0),]
+
+# 4992 observations from 135 countries between 1946-2008
+unique(dictatorDF$country)
+range(dictatorDF$year)
+```
+
+```{r}
+# Outcome Variable
+
+dictatorDF <- dictatorDF %>%
+  mutate(amendment = ifelse(dictatorDF$evnttype == 1, 1, 0))
+
+# Covariates of Interest
+
+dictatorDF <- dictatorDF %>%
+  mutate(noparty = ifelse(dictatorDF$defacto == 0, 1,
+                          ifelse(dictatorDF$defacto == 1 | dictatorDF$defacto == 2, 0, NA))) %>%
+  mutate(oneparty = ifelse(dictatorDF$defacto == 1, 1,
+                          ifelse(dictatorDF$defacto == 0 | dictatorDF$defacto == 2, 0, NA))) %>%
+  mutate(multparty = ifelse(dictatorDF$defacto == 2, 1,
+                          ifelse(dictatorDF$defacto == 0 | dictatorDF$defacto == 1, 0, NA)))
+
+dictatorDF <- dictatorDF %>%
+  mutate(nopartyleg = ifelse(dictatorDF$lparty == 0, 1,
+                             ifelse(dictatorDF$lparty == 1 | dictatorDF$lparty == 2, 0, NA))) %>%
+  mutate(onepartyleg = ifelse(dictatorDF$lparty == 1, 1,
+                              ifelse(dictatorDF$lparty == 0 | dictatorDF$lparty == 2, 0, NA))) %>%
+  mutate(multpartyleg = ifelse(dictatorDF$lparty == 2, 1,
+                               ifelse(dictatorDF$lparty == 0 | dictatorDF$lparty == 1, 0, NA)))
+
+# Other Covariates
+
+dictatorDF <- dictatorDF %>%
+  mutate(systage = year - systyear)
+
+dictatorDF <- dictatorDF %>%
+  mutate(lsystage = log(systage + 1))
+
+dictatorDF$length <- as.numeric(dictatorDF$length)
+
+dictatorDF <- dictatorDF %>%
+  mutate(llength = log(length))
+
+dictatorDF <- dictatorDF %>%
+  mutate(fcountry = as.factor(country))
+
+```
+
+
+```{r}
+
+# Model 1: Party Institutionalization
+m1 <- amendment ~ oneparty + multparty + llength + lsystage + prop + approv
+m1DF <- extractdata(m1, dictatorDF, na.rm=TRUE) 
+
+y <- m1DF$amendment
+x1 <- m1DF[,2:ncol(m1DF)] %>% as.matrix()
+
+# Likelihood function for logit
+llk.logit <- function(param,y,x) {
+  os <- rep(1, length(x[,1]))
+  x <- cbind(os, x)
+  b <- param[1:ncol(x)]
+  xb <- x%*%b
+  sum( y*log(1+exp(-xb)) + (1-y)*log(1+exp(xb)));
+}
+
+# Fit logit model using optim
+ls.result <- lm(y~x1)  # use ls estimates as starting values
+stval <- ls.result$coefficients  # initial guesses
+logit.m1 <- optim(stval,llk.logit,method="BFGS",hessian=T,y=y,x=x1)
+                   # call minimizer procedure
+pe.m1 <- logit.m1$par   # point estimates
+vc.m1 <- solve(logit.m1$hessian)  # var-cov matrix
+se.m1 <- sqrt(diag(vc.m1))    # standard errors
+ll.m1 <- -logit.m1$value  # likelihood at maximum
+
+# Model 1:  GLM estimation
+glm.m1 <- glm(m1, data=m1DF, family="binomial")
+summary(glm.m1)
+```
+
+```{r}
+
+# Model 2: Legislature Competition
+m2 <- amendment ~ onepartyleg + multpartyleg + llength + lsystage + prop + approv
+m2DF <- extractdata(m2, dictatorDF, na.rm=TRUE) 
+
+y2 <- m2DF$amendment
+x2 <- m2DF[,2:ncol(m2DF)] %>% as.matrix()
+
+# Fit logit model using optim
+ls.result2 <- lm(y2~x2)  # use ls estimates as starting values
+stval <- ls.result2$coefficients  # initial guesses
+logit.m2 <- optim(stval,llk.logit,method="BFGS",hessian=T,y=y2,x=x2)
+                   # call minimizer procedure
+pe.m2 <- logit.m2$par   # point estimates
+vc.m2 <- solve(logit.m2$hessian)  # var-cov matrix
+se.m2 <- sqrt(diag(vc.m2))    # standard errors
+ll.m2 <- -logit.m2$value  # likelihood at maximum
+
+# Model 1:  GLM estimation
+glm.m2 <- glm(m2, data=m2DF, family="binomial")
+summary(glm.m2)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+
+#the predicted probability (and 95% confidence interval) of amendment for the same range of length, given noparty, oneparty, or multparty
+
+sims <- 10000
+sim.betas <- mvrnorm(sims, pe.m1, vc.m1) 
+
+xhyp <- seq(5.5, 11, 0.5)
+nscen <- length(xhyp)
+
+nopartyScen <- onepartyScen <- multpartyScen <- cfMake(m1, 
+                                                       data = m1DF,
+                                                       nscen = nscen)
+
+for (i in 1:nscen) {
+  nopartyScen <- cfChange(nopartyScen, "llength", x = xhyp[i], scen = i)
+  nopartyScen <- cfChange(nopartyScen, "oneparty", x = 0, scen = i)
+  nopartyScen <- cfChange(nopartyScen, "multparty", x = 0, scen = i)
+  
+  onepartyScen <- cfChange(onepartyScen, "llength", x = xhyp[i], scen = i)
+  onepartyScen <- cfChange(onepartyScen, "oneparty", x = 1, scen = i)
+  onepartyScen <- cfChange(onepartyScen, "multparty", x = 0, scen = i)
+  
+  multpartyScen <- cfChange(multpartyScen, "llength", x = xhyp[i], scen = i)
+  multpartyScen <- cfChange(multpartyScen, "oneparty", x = 0, scen = i)
+  multpartyScen <- cfChange(multpartyScen, "multparty", x = 1, scen = i)
+}
+
+nopartySims <- logitsimev(nopartyScen, sim.betas, ci=0.95)
+onepartySims <- logitsimev(onepartyScen, sim.betas, ci=0.95)
+multpartySims <- logitsimev(multpartyScen, sim.betas, ci=0.95)
+
+# for the graphic
+nopartySims_tb <- nopartySims %>%
+  bind_rows() %>%
+  mutate(
+    xhyp = xhyp,  # add "xhyp" as a covariate
+    parties = "0 Parties"  # add a column to identify which scenario
+  )
+
+onepartySims_tb <- onepartySims %>%
+  bind_rows() %>%
+  mutate(xhyp = xhyp, parties = "1 Party")
+
+multpartySims_tb <- multpartySims %>%
+  bind_rows() %>%
+  mutate(xhyp = xhyp, parties = "Multiple Parties")
+
+allSims_tb <- bind_rows(nopartySims_tb, onepartySims_tb, multpartySims_tb)
+
+col <- brewer.pal(3, "Dark2")
+
+allSims_tb %>%
+  ggplot(aes(x = xhyp, y = pe, ymax = upper, ymin = lower, 
+             colour = parties, fill = parties)) +
+  geom_line() +
+  geom_ribbon(alpha = 0.2, linetype = 0) +
+  scale_color_manual(values = rev(col)) +
+  scale_fill_manual(values = rev(col)) +
+  scale_x_continuous(breaks = seq(5.5, 11, 0.5)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), 
+                     limits = c(0, 1), expand = c(0, 0)) +
+  labs(y = "Probability of Passing Amendment", x = "Logged Length of the Constitution",
+       title = "Party Institutionalization") +
+  facet_wrap(~parties) +
+  theme_caviz_hgrid +
+  theme(legend.position = "none",
+        plot.title = element_text(size=14, face="bold", hjust = 0.5))
+  
+```
+
+
+```{r warning=FALSE, message=FALSE}
+
+#the predicted probability (and 95% confidence interval) of amendment for the same range of length, given nopartyleg, onepartyleg, or multpartyleg
+
+sims <- 10000
+sim.betas.m2 <- mvrnorm(sims, pe.m2, vc.m2) 
+
+nopartylegScen <- onepartylegScen <- multpartylegScen <- cfMake(m2, 
+                                                                data = m2DF,
+                                                                nscen = nscen)
+
+for (i in 1:nscen) {
+  nopartylegScen <- cfChange(nopartylegScen, "llength", x = xhyp[i], scen = i)
+  nopartylegScen <- cfChange(nopartylegScen, "onepartyleg", x = 0, scen = i)
+  nopartylegScen <- cfChange(nopartylegScen, "multpartyleg", x = 0, scen = i)
+  
+  onepartylegScen <- cfChange(onepartylegScen, "llength", x = xhyp[i], scen = i)
+  onepartylegScen <- cfChange(onepartylegScen, "onepartyleg", x = 1, scen = i)
+  onepartylegScen <- cfChange(onepartylegScen, "multpartyleg", x = 0, scen = i)
+  
+  multpartylegScen <- cfChange(multpartylegScen, "llength", x = xhyp[i], scen = i)
+  multpartylegScen <- cfChange(multpartylegScen, "onepartyleg", x = 0, scen = i)
+  multpartylegScen <- cfChange(multpartylegScen, "multpartyleg", x = 1, scen = i)
+}
+
+nopartylegSims <- logitsimev(nopartylegScen, sim.betas.m2, ci=0.95)
+onepartylegSims <- logitsimev(onepartylegScen, sim.betas.m2, ci=0.95)
+multpartylegSims <- logitsimev(multpartylegScen, sim.betas.m2, ci=0.95)
+
+# for the graphic
+nopartylegSims_tb <- nopartylegSims %>%
+  bind_rows() %>%
+  mutate(
+    xhyp = xhyp,  # add "xhyp" as a covariate
+    parties = "0 Parties in Legislature"  # add a column to identify which scenario
+  )
+
+onepartylegSims_tb <- onepartylegSims %>%
+  bind_rows() %>%
+  mutate(xhyp = xhyp, parties = "1 Party in Legislature")
+
+multpartylegSims_tb <- multpartylegSims %>%
+  bind_rows() %>%
+  mutate(xhyp = xhyp, parties = "Multiple Parties in Legislature")
+
+allSims_tb2 <- bind_rows(nopartylegSims_tb, onepartylegSims_tb, multpartylegSims_tb)
+
+col <- brewer.pal(3, "Dark2")
+
+allSims_tb2 %>%
+  ggplot(aes(x = xhyp, y = pe, ymax = upper, ymin = lower, 
+             colour = parties, fill = parties)) +
+  geom_line() +
+  geom_ribbon(alpha = 0.2, linetype = 0) +
+  scale_color_manual(values = rev(col)) +
+  scale_fill_manual(values = rev(col)) +
+  scale_x_continuous(breaks = seq(5.5, 11, 0.5)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), 
+                     limits = c(0, 1), expand = c(0, 0)) +
+  labs(y = "Probability of Passing Amendment", x = "Logged Length of the Constitution",
+       title = "Legislature Competition") +
+  facet_wrap(~parties) +
+  theme_caviz_hgrid +
+  theme(legend.position = "none",
+        plot.title = element_text(size=14, face="bold", hjust = 0.5))
+  
+```
+
+
+
+```{r}
+# In-Sample GOF
+
+binnedM1 <- binPredict(glm.m1, col=purple, 
+                       label="Model 1: Party Institutionalization",
+                       quantiles=TRUE)
+
+binnedM2 <- binPredict(glm.m2, col=orange, 
+                       label="Model 2: Legislature Competition", 
+                       quantiles=TRUE)
+
+plot(binnedM1, binnedM2, display=c("roc", "avp"), labx = 0.30)
+```
+
+```{r}
+# Cross-validated GOF
+
+obj <- glm.m1
+i <- 3
+
+## A simple leave-one-out cross-validation function for logit glm; returns predicted probs
+loocv <- function (obj) {
+    data <- obj$data
+    m <- dim(data)[1]
+    form <- formula(obj)
+    fam <- obj$family$family
+    loo <- rep(NA, m)
+    for (i in 1:m) {
+        i.glm <- glm(form, data = data[-i, ], family = fam)
+        loo[i] <- predict(i.glm, newdata = data[i,], family = fam, type = "response")
+    }
+    loo
+}
+
+# LOOCV for both models
+predCVm1 <- loocv(glm.m1)
+predCVm2 <- loocv(glm.m2)
+
+
+# Make cross-validated AVP and ROC plots; note use of newpred input in binPredict
+binnedM1cv <- binPredict(glm.m1, newpred=predCVm1, col=purple, 
+                         label="Model 1:LOO-CV", quantiles=TRUE)
+
+binnedM2cv <- binPredict(glm.m2, newpred=predCVm2, col=orange, 
+                         label="Model 2:LOO-CV", quantiles=TRUE)
+
+plot(binnedM1cv,binnedM2cv, display=c("roc","avp"), hide = T, labx=0.35)
+```
+
+
+```{r}
+
+#FD rope ladder plot (for party institutionalization)
+
+sims <- 10000
+sim.betas <- mvrnorm(sims, pe.m1, vc.m1) 
+
+no.to.oneScen <- one.to.multScen <- mult.to.noScen <- cfMake(m1, 
+                                                       data = m1DF,
+                                                       nscen = 1)
+
+  no.to.oneScen <- cfChange(no.to.oneScen, "oneparty", xpre = 0, x = 1, scen = 1)
+  no.to.oneScen <- cfChange(no.to.oneScen, "multparty", xpre = 0, x = 0, scen = 1)
+  
+  one.to.multScen <- cfChange(one.to.multScen, "oneparty", xpre = 1, x = 0, scen = 1)
+  one.to.multScen <- cfChange(one.to.multScen, "multparty", xpre = 0, x = 1, scen = 1)
+  
+  mult.to.noScen <- cfChange(mult.to.noScen, "oneparty", xpre = 0, x = 0, scen = 1)
+  mult.to.noScen <- cfChange(mult.to.noScen, "multparty", xpre = 1, x = 0, scen = 1)
+  
+
+no.to.oneFD<-logitsimfd(no.to.oneScen, sim.betas, ci=0.95) %>% as.data.frame() 
+
+one.to.multFD<-logitsimfd(one.to.multScen, sim.betas, ci=0.95) %>% as.data.frame()
+
+mult.to.noFD<-logitsimfd(mult.to.noScen, sim.betas, ci=0.95) %>% as.data.frame()
+
+
+FD<-rbind(no.to.oneFD, one.to.multFD, mult.to.noFD)
+
+labels <- c("Change from 0 Parties \n to 1 Party", 
+            "Change from 1 Party \n to Multiple Parties",
+            "Change from Multiple Parties \n to 0 Parties")
+
+baseline <- linesTile(x=c(0,0), y = c(0,1), plot=1)
+
+trace <- list(NULL)
+trace1 <- ropeladder(x = FD$pe,
+                     lower = FD$lower,
+                     upper = FD$upper,
+                     size=0.5,
+                     lex=1.5,
+                     labels=labels,
+                     lineend="square",
+                     plot = 1)
+
+tile(trace1,
+     baseline,
+     gridlines = list(type = "xt"),
+     xaxis = list(at = seq(from = -0.12, 0.12, by = 0.04)),
+     plottitle=list(labels="First Differences: Model 1"))
+```
+
+```{r}
+
+#FD rope ladder plot (for legislature competition)
+
+sims <- 10000
+sim.betas.m2 <- mvrnorm(sims, pe.m2, vc.m2) 
+
+no.to.one.legScen <- one.to.mult.legScen <- mult.to.no.legScen <- cfMake(m2, 
+                                                                         data = m2DF,
+                                                                         nscen = 1)
+
+  no.to.one.legScen <- cfChange(no.to.one.legScen, "onepartyleg", xpre = 0, x = 1, scen = 1)
+  no.to.one.legScen <- cfChange(no.to.one.legScen, "multpartyleg", xpre = 0, x = 0, scen = 1)
+  
+  one.to.mult.legScen <- cfChange(one.to.mult.legScen, "onepartyleg", xpre = 1, x = 0, scen = 1)
+  one.to.mult.legScen <- cfChange(one.to.mult.legScen, "multpartyleg", xpre = 0, x = 1, scen = 1)
+  
+  mult.to.no.legScen <- cfChange(mult.to.no.legScen, "onepartyleg", xpre = 0, x = 0, scen = 1)
+  mult.to.no.legScen <- cfChange(mult.to.no.legScen, "multpartyleg", xpre = 1, x = 0, scen = 1)
+  
+
+no.to.one.legFD<-logitsimfd(no.to.one.legScen, sim.betas.m2, ci=0.95) %>% as.data.frame() 
+
+one.to.mult.legFD<-logitsimfd(one.to.mult.legScen, sim.betas.m2, ci=0.95) %>% as.data.frame()
+
+mult.to.no.legFD<-logitsimfd(mult.to.no.legScen, sim.betas.m2, ci=0.95) %>% as.data.frame()
+
+
+FD2<-rbind(no.to.one.legFD, one.to.mult.legFD, mult.to.no.legFD)
+
+labels <- c("Change from 0 Party Legislature \n to 1 Party Legislature", 
+            "Change from 1 Party Legislature \n to Multiple Party Legislature",
+            "Change from Multiple Party Legislature \n to 0 Party Legislature")
+
+baseline <- linesTile(x=c(0,0), y = c(0,1), plot=1)
+
+trace <- list(NULL)
+trace1 <- ropeladder(x = FD2$pe,
+                     lower = FD2$lower,
+                     upper = FD2$upper,
+                     size=0.5,
+                     lex=1.5,
+                     labels=labels,
+                     lineend="square",
+                     plot = 1)
+
+tile(trace1,
+     baseline,
+     gridlines = list(type = "xt"),
+     xaxis = list(at = seq(from = -0.10, 0.14, by = 0.04)),
+     plottitle=list(labels="First Differences: Model 2"))
+```
+
+
+```{r}
+
+## descriptive plot - this needs to be updated
+
+purple <- "#3f007d"
+freq<-dictatorDF%>%
+  filter(amendment==1)%>%
+  group_by(year)%>%
+  summarise(freq=n())%>%
+  as.data.frame()
+
+ggplot(freq, aes(x=year, y=freq))+
+  geom_point(color="purple", size=3)+
+  scale_x_continuous(breaks=seq(1945, 2010, by=5))+
+  labs(title = "Number of Amendments Across Dictatorships", x= "year", y = "total number")+
+  theme(plot.title= element_text(hjust = 0.5))
+
+```
