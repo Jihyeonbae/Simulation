@@ -1,7 +1,6 @@
 ---
 title: "CSSS 510 Final Paper"
 author: "Jihyeon Bae, Rachel Fordham, Lanyi Zhu"
-date: "11/29/2021"
 output: pdf_document
 editor_options: 
   chunk_output_type: console
